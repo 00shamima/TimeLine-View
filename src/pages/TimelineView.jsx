@@ -1,492 +1,338 @@
-import React, { useState, useEffect } from 'react';
-import { FaThList, FaSearchPlus, FaSearchMinus, FaFolderOpen, FaRegClock, FaTimes, FaChevronRight, FaArrowsAltH, FaArrowsAltV } from 'react-icons/fa';
-import { RiTimelineView } from 'react-icons/ri';
+import { useState, useEffect, useRef } from "react";
+import { 
+  HiMoon, HiSun, HiPencil, HiTrash, HiExternalLink, 
+  HiCloudUpload, HiEye, HiSave, HiX, HiChevronRight, HiChevronDown 
+} from "react-icons/hi";
+import { motion, AnimatePresence } from "framer-motion"; 
 
-import Navbar from '../components/Navbar';
-import ControlPanel from '../components/ControlPanel';
-import DataStructureTable from '../components/DataStructureTable';
-import BottomDockNav from '../components/BottomDockNav';
+const API = "http://localhost:5000/api/timeline";
 
-export default function TimeLineViewPage() {
-  const [darkMode, setDarkMode] = useState(true);
-  const [file, setFile] = useState(null);
-  const [activeTab, setActiveTab] = useState('upload'); 
-  
-  const [previewData, setPreviewData] = useState([]); 
-  const [timelineData, setTimelineData] = useState([]); 
-  const [isSaved, setIsSaved] = useState(false);
-  
-  const [timelineName, setTimelineName] = useState('');
-  const [savedTimelines, setSavedTimelines] = useState([]);
-  const [selectedEvent, setSelectedEvent] = useState(null);
-  const [isModalOpen, setIsModalOpen] = useState(false); 
-  
-  const [selectedYear, setSelectedYear] = useState('All');
-  const [selectedMonth, setSelectedMonth] = useState('All');
-  const [viewType, setViewType] = useState('table'); 
-  const [viewLayout, setViewLayout] = useState('vertical'); 
-  const [zoomLevel, setZoomLevel] = useState(1); 
-
-  const [showTablePreview, setShowTablePreview] = useState(false);
-
-  useEffect(() => {
-    fetchSavedTimelines();
-  }, []);
-
-  const fetchSavedTimelines = async () => {
-    try {
-      const response = await fetch('http://localhost:5000/api/timeline/names');
-      const result = await response.json();
-      if (result.success) setSavedTimelines(result.datasets || []);
-    } catch (err) {
-      console.error("Sub-vault system tracking exception:", err);
-    }
-  };
-
-  const uniqueSavedTimelines = [];
-  const seenNames = new Set();
-  savedTimelines.forEach((timeline) => {
-    if (timeline && timeline.name && !seenNames.has(timeline.name)) {
-      seenNames.add(timeline.name);
-      uniqueSavedTimelines.push(timeline);
-    }
-  });
-
-  const safeChronologicalSort = (dataArray) => {
-    return dataArray.sort((a, b) => {
-      const dateA = a.date ? new Date(a.date).getTime() : 0;
-      const dateB = b.date ? new Date(b.date).getTime() : 0;
-      if (isNaN(dateA) && isNaN(dateB)) return 0;
-      if (isNaN(dateA)) return 1;
-      if (isNaN(dateB)) return -1;
-      return dateA - dateB;
-    });
-  };
-
-  const handleFileChange = (e) => {
-    const uploadedFile = e.target.files[0];
-    if (!uploadedFile) return;
-
-    if (!uploadedFile.name.endsWith('.csv')) {
-      alert("Attach structural CSV file schemas only.");
-      e.target.value = null; 
-      return;
-    }
-
-    setFile(uploadedFile);
-    setTimelineName(uploadedFile.name.replace('.csv', ''));
-    setShowTablePreview(false);
-
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const rawText = event.target.result;
-      const lines = rawText.split('\n');
-      if (lines.length === 0 || !lines[0]) return;
-      
-      const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
-      
-      let parsedRows = lines.slice(1).map(line => {
-        if (!line.trim()) return null;
-        const values = line.split(',');
-        if (values.length >= headers.length) {
-          const nameIndex = headers.indexOf('name') !== -1 ? headers.indexOf('name') : headers.indexOf('title');
-          const dateIndex = headers.indexOf('date');
-          const descIndex = headers.indexOf('description');
-
-          let rawDate = dateIndex !== -1 && values[dateIndex] ? values[dateIndex].trim() : "";
-          let formattedDate = "";
-
-          if (rawDate) {
-            const dateParts = rawDate.split(/[-/]/); 
-            if (dateParts.length === 3) {
-              if (dateParts[0].length === 4) {
-                const year = dateParts[0];
-                const month = dateParts[1].padStart(2, '0');
-                const day = dateParts[2].padStart(2, '0');
-                formattedDate = `${year}-${month}-${day}`;
-              } else if (dateParts[2].length === 4) {
-                const day = dateParts[0].padStart(2, '0');
-                const month = dateParts[1].padStart(2, '0');
-                const year = dateParts[2];
-                formattedDate = `${year}-${month}-${day}`;
-              }
-            }
-          }
-
-          return {
-            name: nameIndex !== -1 && values[nameIndex] ? values[nameIndex].trim() : "Untitled Action",
-            date: formattedDate || rawDate, 
-            description: descIndex !== -1 && values[descIndex] ? values[descIndex].trim() : ""
-          };
-        }
-        return null;
-      }).filter(Boolean);
-
-      parsedRows = safeChronologicalSort(parsedRows);
-
-      setPreviewData(parsedRows);
-      setTimelineData([]); 
-      setViewType('table');
-      setIsSaved(false);
-      setSelectedEvent(null);
-      setActiveTab('upload'); 
+function parseCSV(text) {
+  const lines = text.trim().split(/\r?\n/);
+  if (lines.length < 2) throw new Error("CSV must contain header + rows");
+  const headers = lines[0].split(",").map((h) => h.trim().toLowerCase());
+  return lines.slice(1).map((line) => {
+    const values = line.split(",");
+    const obj = {};
+    headers.forEach((h, i) => { obj[h] = values[i]?.trim() || ""; });
+    return { 
+      ...obj, 
+      title: obj.name || obj.title, 
+      date: new Date(obj.date), 
+      description: obj.description || "No description provided." 
     };
-    reader.readAsText(uploadedFile);
-  };
-
-  const handlePreviewClick = () => {
-    if (previewData.length === 0) {
-      return alert("Operation rejected. Matrix pipeline arrays are empty. Please upload a file.");
-    }
-    setViewType('table'); 
-    setShowTablePreview((prev) => !prev); 
-  };
-
-  const handleGenerateClick = () => {
-    if (previewData.length === 0) return alert("Operation rejected. Matrix pipeline arrays are empty.");
-    setTimelineData(previewData); 
-    setViewType('timeline'); 
-    setActiveTab('canvas'); 
-    setShowTablePreview(false);
-    if (previewData.length > 0) setSelectedEvent(previewData[0]);
-  };
-
-  const handleSaveClick = async () => {
-    if (previewData.length === 0) return alert("Commit payload empty.");
-
-    try {
-      const response = await fetch('http://localhost:5000/api/timeline/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: timelineName, events: previewData })
-      });
-      const result = await response.json();
-      if (result.success) {
-        alert("saved successfully.");
-        setIsSaved(true);
-        fetchSavedTimelines(); 
-      }
-    } catch (err) {
-      alert("persistence routing handshake exception on sever runtime.");
-    }
-  };
-
-  const handleLoadTimeline = async (name) => {
-    try {
-      const response = await fetch(`http://localhost:5000/api/timeline/data/${encodeURIComponent(name)}`);
-      const result = await response.json();
-      if (result.success) {
-        let mappedDataset = result.data.map(e => ({
-          name: e.name || e.title || "Untitled Action",
-          date: e.date ? e.date.split('T')[0] : "",
-          description: e.description || ""
-        }));
-
-        mappedDataset = safeChronologicalSort(mappedDataset);
-
-        setPreviewData(mappedDataset); 
-        setTimelineData(mappedDataset); 
-        setTimelineName(result.timelineName);
-        setIsSaved(true);
-        setViewType('timeline');
-        setActiveTab('canvas'); 
-        setShowTablePreview(false); 
-        if (mappedDataset.length > 0) setSelectedEvent(mappedDataset[0]);
-      }
-    } catch (err) {
-      console.error("Critical sub-vault pull sync error:", err);
-    }
-  };
-
-  const handleEventCardClick = (event) => {
-    setSelectedEvent(event);
-    setIsModalOpen(true);
-  };
-
-  const years = ['All', ...new Set(previewData.map(d => d.date ? d.date.split('-')[0] : null).filter(Boolean))];
-  const months = ['All', '01', '02', '03', '04', '05', '06', '07', '08', '09', '10', '11', '12'];
-
-  const displayedDataset = viewType === 'timeline' ? timelineData : previewData;
-
-  const filteredData = displayedDataset.filter(item => {
-    if (!item || !item.date) return false;
-    const parts = item.date.split('-');
-    if (parts.length < 2) return false;
-    const year = parts[0];
-    const month = parts[1];
-    return (selectedYear === 'All' || year === selectedYear) && (selectedMonth === 'All' || month === selectedMonth);
   });
+}
+
+function formatDate(date, zoom) {
+  const d = new Date(date);
+  if (zoom === "year") return d.getFullYear();
+  if (zoom === "month") return d.toLocaleDateString("en-US", { year: "numeric", month: "short" });
+  return d.toLocaleDateString("en-US", { year: "numeric", month: "short", day: "numeric" });
+}
+
+function EventDetailsModal({ event, dark, onClose, zoom }) {
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 2000, display: "flex", justifyContent: "center", alignItems: "center", backdropFilter: "blur(10px)" }}>
+      <motion.div 
+        initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }}
+        style={{ background: dark ? "#1e293b" : "#fff", width: 500, borderRadius: 24, padding: 35, border: `1px solid ${dark ? "#334155" : "#ddd"}`, position: "relative" }}>
+        <button onClick={onClose} style={{ position: "absolute", top: 20, right: 20, background: "#ef444415", border: "none", cursor: "pointer", color: "#ef4444", borderRadius: "50%", padding: 8 }}><HiX size={20} /></button>
+        <div style={{ color: "#2563eb", fontWeight: 700, fontSize: 14, marginBottom: 10 }}>{formatDate(event.date, zoom)}</div>
+        <h2 style={{ color: dark ? "#fff" : "#111827", marginTop: 0 }}>{event.title}</h2>
+        <p style={{ color: dark ? "#94a3b8" : "#64748b", lineHeight: 1.6, fontSize: 16 }}>{event.description}</p>
+      </motion.div>
+    </div>
+  );
+}
+
+function TimelineCard({ event, zoom, dark, onClick }) {
+  const theme = dark 
+    ? { bg: "#1e293b", text: "#fff", sub: "#94a3b8", border: "#334155" } 
+    : { bg: "#fff", text: "#111827", sub: "#64748b", border: "#e2e8f0" };
 
   return (
-    <div className={`min-h-screen pb-28 transition-all duration-500 ease-in-out ${darkMode ? 'bg-[#0B0C10] text-[#E2E8F0]' : 'bg-slate-50 text-slate-800'}`}>
-      
-      <Navbar darkMode={darkMode} setDarkMode={setDarkMode} />
+    <motion.div 
+      layout
+      initial={{ opacity: 0, y: 20 }}
+      whileInView={{ opacity: 1, y: 0 }}
+      viewport={{ once: true }}
+      whileHover={{ y: -10, scale: 1.02 }}
+      onClick={onClick}
+      style={{
+        minWidth: 280, background: theme.bg, borderRadius: 20, padding: 20,
+        boxShadow: "0 10px 25px rgba(0,0,0,0.05)", cursor: "pointer",
+        border: `1px solid ${theme.border}`, position: "relative"
+      }}
+    >
+      <div style={{ color: "#2563eb", fontWeight: 700, fontSize: 13, marginBottom: 8 }}>{formatDate(event.date, zoom)}</div>
+      <div style={{ color: theme.text, fontSize: 18, fontWeight: 700, marginBottom: 8 }}>{event.title}</div>
+      <div style={{ color: theme.sub, fontSize: 14, lineHeight: 1.5 }}>{event.description.substring(0, 80)}...</div>
+    </motion.div>
+  );
+}
 
-      <div className="p-4 sm:p-8 max-w-[1600px] mx-auto space-y-8">
-        
-        {(activeTab === 'upload' || activeTab === 'canvas') && (
-          <div className="space-y-8 animate-fadeIn">
-            
-            <div className="transition-all duration-300 [&_select]:hover:scale-105 [&_select]:transition-all [&_select]:duration-300 [&_select]:cursor-pointer">
-              <ControlPanel 
-                darkMode={darkMode} file={file} handleFileChange={handleFileChange}
-                selectedYear={selectedYear} setSelectedYear={setSelectedYear}
-                selectedMonth={selectedMonth} setSelectedMonth={setSelectedMonth}
-                years={years} months={months} handleGenerateClick={handleGenerateClick} 
-                handleSaveClick={handleSaveClick} previewData={previewData} isSaved={isSaved}
-                handlePreviewClick={handlePreviewClick} showTablePreview={showTablePreview}
-              />
-            </div>
+function EditModal({ dark, timeline, onClose, onSaved }) {
+  const [events, setEvents] = useState(timeline.events.map(e => ({ 
+    ...e, 
+    date: new Date(e.date).toISOString().split("T")[0] 
+  })));
 
-            <div className="w-full transition-all duration-300">
-              <div className={`p-4 sm:p-6 md:p-8 rounded-2xl border transition-all duration-300 ${darkMode ? 'bg-[#12141C] border-[#1f222f]' : 'bg-white border-slate-200 shadow-md'}`}>
-                
-                <div className={`flex flex-wrap justify-between items-center mb-8 gap-4 border-b pb-5 border-dashed ${darkMode ? 'border-[#2A2E3D]' : 'border-slate-200'}`}>
-                  <h3 className={`text-sm font-mono font-bold uppercase tracking-wider flex items-center gap-2 text-base ${darkMode ? 'text-white' : 'text-slate-800'}`}>
-                    {viewType === 'timeline' ? <RiTimelineView className="text-[#22C55E] text-xl" /> : <FaThList className="text-[#22C55E] text-xl" />} 
-                    table data: <span className="text-[#22C55E] font-sans text-lg font-bold ml-1">{timelineName || "Timeline"}</span>
-                  </h3>
-                  
-                  {viewType === 'timeline' && filteredData.length > 0 && (
-                    <div className="flex flex-wrap items-center gap-4">
-                      <div className={`flex items-center gap-1 p-1 rounded-xl border ${darkMode ? 'bg-[#0B0C10] border-[#2A2E3D]' : 'bg-slate-100 border-slate-250'}`}>
-                        <button 
-                          onClick={() => setViewLayout('vertical')} 
-                          className={`flex items-center gap-1 px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition-all ${viewLayout === 'vertical' ? 'bg-[#22C55E] text-black shadow-md' : 'text-gray-400 hover:text-white'}`}
-                        >
-                          <FaArrowsAltV /> Vertical
-                        </button>
-                        <button 
-                          onClick={() => setViewLayout('horizontal')} 
-                          className={`flex items-center gap-1 px-3 py-1.5 text-xs font-mono font-bold rounded-lg transition-all ${viewLayout === 'horizontal' ? 'bg-[#22C55E] text-black shadow-md' : 'text-gray-400 hover:text-white'}`}
-                        >
-                          <FaArrowsAltH /> Horizontal
-                        </button>
-                      </div>
+  const handleUpdate = async () => {
+    try {
+      const formatted = events.map(e => ({ title: e.title, name: e.title, date: e.date, description: e.description }));
+      const res = await fetch(`${API}/update/${timeline.id}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: timeline.name, events: formatted }),
+      });
+      const data = await res.json();
+      if (data.success) { 
+        onSaved({ ...timeline, events: formatted.map(e => ({ ...e, date: new Date(e.date) })) }); 
+        onClose(); 
+      }
+    } catch (err) { alert("Update failed"); }
+  };
 
-                      <div className={`flex items-center gap-2 p-1.5 rounded-xl border transition-all ${darkMode ? 'bg-[#0B0C10] border-[#2A2E3D]' : 'bg-slate-100 border-slate-250'}`}>
-                        <button onClick={() => setZoomLevel(prev => Math.max(0.65, prev - 0.05))} className="p-2 text-sm hover:text-[#22C55E] hover:scale-110 transition-all"><FaSearchMinus /></button>
-                        <span className="text-xs font-mono font-bold px-2 min-w-[45px] text-center">{Math.round(zoomLevel * 100)}%</span>
-                        <button onClick={() => setZoomLevel(prev => Math.min(1.2, prev + 0.05))} className="p-2 text-sm hover:text-[#22C55E] hover:scale-110 transition-all"><FaSearchPlus /></button>
-                      </div>
-                    </div>
-                  )}
-                </div>
-
-                {viewType === 'timeline' ? (
-                  filteredData.length === 0 ? (
-                    <div className="text-center py-24 italic text-gray-500 text-sm font-mono"> Graphics mapping target blank. Execute Generate array block.</div>
-                  ) : (
-                    viewLayout === 'vertical' ? (
-                      <div className="relative py-4 md:py-6 overflow-hidden select-none">
-                        <div className={`absolute lg:left-1/2 left-4 transform lg:-translate-x-1/2 top-0 bottom-0 w-[3px] z-0 ${darkMode ? 'bg-gradient-to-b from-[#22C55E] via-[#22C55E]/20 to-transparent' : 'bg-green-200'}`} />
-                        
-                        <div 
-                          className="space-y-6 md:space-y-8 relative z-10 mx-auto max-w-5xl" 
-                          style={{ 
-                            paddingTop: `${zoomLevel * 1.5}rem`, 
-                            paddingBottom: `${zoomLevel * 1.5}rem`, 
-                            gap: `${zoomLevel * 2}rem` 
-                          }}
-                        >
-                          {filteredData.map((event, idx) => {
-                            const isEven = idx % 2 === 0;
-                            const isSelected = selectedEvent === event;
-                            return (
-                              <div key={idx} onClick={() => handleEventCardClick(event)} className={`flex w-full items-center justify-between cursor-pointer group transition-all duration-300 lg:flex-row ${isEven ? 'lg:flex-row' : 'lg:flex-row-reverse'} flex-row`}>
-                                <div className="w-full lg:w-[45%] pl-10 pr-2 lg:p-0 flex justify-start">
-                                  <div className={`w-full rounded-2xl border text-left scale-100 transition-all duration-500 transform hover:-translate-y-1.5 ${isSelected ? (darkMode ? 'bg-[#1C1F2E] border-[#22C55E] shadow-[0_0_35px_rgba(34,197,94,0.35)]' : 'bg-green-50 border-green-500 shadow-md') : (darkMode ? 'bg-[#161925] border-[#232736] hover:border-[#22C55E]' : 'bg-slate-50 border-slate-200 hover:border-green-400')}`} style={{ padding: `${zoomLevel * 1.25}rem` }}>
-                                    <span className="font-mono font-bold text-[#22C55E] rounded-md bg-[#22C55E]/10 border border-[#22C55E]/20 inline-block" style={{ fontSize: `${zoomLevel * 0.75}rem`, padding: `${zoomLevel * 0.25}rem ${zoomLevel * 0.6}rem` }}>{event.date}</span>
-                                    <h4 className={`font-extrabold mt-3 truncate ${darkMode ? 'text-white' : 'text-slate-800'} group-hover:text-[#22C55E]`} style={{ fontSize: `${zoomLevel * 1}rem` }}>{event.name}</h4>
-                                    <p className={`mt-2 line-clamp-2 leading-relaxed ${darkMode ? 'text-gray-400 group-hover:text-gray-200' : 'text-slate-600 group-hover:text-slate-900'}`} style={{ fontSize: `${zoomLevel * 0.85}rem` }}>{event.description}</p>
-                                  </div>
-                                </div>
-                                <div className="absolute lg:left-1/2 left-4 transform lg:-translate-x-1/2 -translate-x-1/2 flex items-center justify-center z-20">
-                                  <div className={`rounded-full transition-all duration-500 relative flex items-center justify-center ${isSelected ? 'w-5 h-5 bg-[#22C55E] shadow-[0_0_15px_rgba(34,197,94,0.5)]' : 'w-4 h-4 bg-[#1A1D26] border-2 border-[#2A2E3D] group-hover:border-[#22C55E]'}`}>
-                                    {isSelected && <span className="absolute w-full h-full rounded-full bg-[#22C55E] opacity-75 animate-ping" />}
-                                    <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-white' : 'bg-transparent group-hover:bg-[#22C55E]'}`} />
-                                  </div>
-                                </div>
-                                <div className="hidden lg:block w-[45%]" />
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="relative py-24 my-6 overflow-x-auto select-none scrollbar-thin scrollbar-thumb-[#22C55E]/20 scrollbar-track-transparent transition-all duration-500">
-                        
-                        <div className={`absolute left-0 right-0 top-1/2 transform -translate-y-1/2 h-[2px] z-0 ${darkMode ? 'bg-zinc-800' : 'bg-slate-300'}`} />
-                        
-                        <div 
-                          className="flex items-center relative z-10 mx-auto"
-                          style={{ gap: `${zoomLevel * 4.5}rem`, paddingLeft: '14rem', paddingRight: '14rem' }}
-                        >
-                          {filteredData.map((event, idx) => {
-                            const isTop = idx % 2 === 0;
-                            const isSelected = selectedEvent === event;
-                            const displayYear = event.date ? event.date.split('-')[0] : 'N/A';
-
-                            return (
-                              <div 
-                                key={idx} 
-                                onClick={() => handleEventCardClick(event)} 
-                                className="flex flex-col items-center justify-center cursor-pointer group transition-all duration-300 min-w-[240px] max-w-[270px] text-center relative"
-                              >
-                                
-                                <div className="h-[140px] flex flex-col justify-end items-center w-full pb-4">
-                                  {isTop && (
-                                    <div className="space-y-1 animate-fadeIn">
-                                      <div className={`font-mono font-black text-sm tracking-widest transition-colors duration-300 ${isSelected ? 'text-[#22C55E]' : (darkMode ? 'text-zinc-500 group-hover:text-zinc-300' : 'text-slate-400 group-hover:text-slate-800')}`}>{displayYear}</div>
-                                      <h4 className={`font-black tracking-wide leading-tight transition-all truncate px-2 ${isSelected ? 'text-[#22C55E]' : (darkMode ? 'text-zinc-100 group-hover:text-[#22C55E]' : 'text-slate-900 group-hover:text-green-600')}`} style={{ fontSize: `${zoomLevel * 0.95}rem` }}>{event.name}</h4>
-                                      <p className={`line-clamp-2 text-xs leading-relaxed transition-all px-2 ${darkMode ? 'text-zinc-400 group-hover:text-zinc-200' : 'text-slate-600 group-hover:text-slate-900'}`} style={{ fontSize: `${zoomLevel * 0.78}rem` }}>{event.description}</p>
-                                    </div>
-                                  )}
-                                </div>
-
-                                <div className="h-[35px] flex items-center justify-center w-full">
-                                  {isTop && (
-                                    <div className={`w-[1.5px] h-[35px] transition-all duration-300 ${isSelected ? 'bg-[#22C55E]' : (darkMode ? 'bg-zinc-700 group-hover:bg-[#22C55E]/50' : 'bg-slate-300 group-hover:bg-green-400')}`} />
-                                  )}
-                                </div>
-
-                                <div className="h-[24px] flex items-center justify-center relative w-full my-0.5">
-                                  <div className={`w-4 h-4 rounded-full transition-all duration-500 flex items-center justify-center border-4 ${
-                                    isSelected 
-                                      ? 'bg-black border-[#22C55E] scale-125 shadow-[0_0_15px_rgba(34,197,94,0.6)]' 
-                                      : (darkMode ? 'bg-black border-zinc-500 group-hover:border-[#22C55E]' : 'bg-white border-slate-400 group-hover:border-green-500')
-                                  }`}>
-                                    {isSelected && <span className="absolute w-6 h-6 rounded-full bg-[#22C55E]/30 animate-ping" />}
-                                  </div>
-                                </div>
-
-                                <div className="h-[35px] flex items-center justify-center w-full">
-                                  {!isTop && (
-                                    <div className={`w-[1.5px] h-[35px] transition-all duration-300 ${isSelected ? 'bg-[#22C55E]' : (darkMode ? 'bg-zinc-700 group-hover:bg-[#22C55E]/50' : 'bg-slate-300 group-hover:bg-green-400')}`} />
-                                  )}
-                                </div>
-
-                                <div className="h-[140px] flex flex-col justify-start items-center w-full pt-4">
-                                  {!isTop && (
-                                    <div className="space-y-1 animate-fadeIn">
-                                      <h4 className={`font-black tracking-wide leading-tight transition-all truncate px-2 ${isSelected ? 'text-[#22C55E]' : (darkMode ? 'text-zinc-100 group-hover:text-[#22C55E]' : 'text-slate-900 group-hover:text-green-600')}`} style={{ fontSize: `${zoomLevel * 0.95}rem` }}>{event.name}</h4>
-                                      <p className={`line-clamp-2 text-xs leading-relaxed transition-all px-2 ${darkMode ? 'text-zinc-400 group-hover:text-zinc-200' : 'text-slate-600 group-hover:text-slate-900'}`} style={{ fontSize: `${zoomLevel * 0.78}rem` }}>{event.description}</p>
-                                      <div className={`font-mono font-black text-sm tracking-widest pt-1 transition-colors duration-300 ${isSelected ? 'text-[#22C55E]' : (darkMode ? 'text-zinc-500 group-hover:text-zinc-300' : 'text-slate-400 group-hover:text-slate-800')}`}>{displayYear}</div>
-                                    </div>
-                                  )}
-                                </div>
-
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    )
-                  )
-                ) : (
-                  showTablePreview ? (
-                    <DataStructureTable darkMode={darkMode} previewData={filteredData} />
-                  ) : (
-                    <div className={`text-center py-24 italic text-sm font-mono ${darkMode ? 'text-gray-500' : 'text-slate-400'}`}>upload  csv 
-                    file</div>
-                  )
-                )}
-
-              </div>
-            </div>
+  return (
+    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.8)", zIndex: 1000, display: "flex", justifyContent: "center", alignItems: "center", backdropFilter: "blur(8px)" }}>
+      <motion.div initial={{ y: 50, opacity: 0 }} animate={{ y: 0, opacity: 1 }} style={{ background: dark ? "#0f172a" : "#fff", width: 750, maxHeight: "85vh", overflowY: "auto", borderRadius: 24, padding: 35, border: `1px solid ${dark ? "#334155" : "#ddd"}` }}>
+        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 25, position: "sticky", top: 0, background: dark ? "#0f172a" : "#fff", paddingBottom: 15, zIndex: 10 }}>
+          <h2 style={{ color: dark ? "#fff" : "#111827", margin: 0 }}>Edit Timeline Events</h2>
+          <button onClick={onClose} style={{ background: "#ef444415", border: "none", cursor: "pointer", color: "#ef4444", borderRadius: "50%", padding: 8, display: "flex" }}><HiX size={24} /></button>
+        </div>
+        {events.map((ev, i) => (
+          <div key={i} style={{ marginBottom: 20, padding: 20, border: `1px solid ${dark ? "#1e293b" : "#f1f5f9"}`, borderRadius: 18, background: dark ? "#1e293b55" : "#f8fafc" }}>
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#2563eb", marginBottom: 5 }}>TITLE</label>
+            <input value={ev.title} onChange={e => { const a = [...events]; a[i].title = e.target.value; setEvents(a); }} style={{ width: "100%", padding: 12, marginBottom: 15, borderRadius: 10, border: "1px solid #cbd5e1", background: dark ? "#0f172a" : "#fff", color: dark ? "#fff" : "#000" }} />
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#2563eb", marginBottom: 5 }}>DATE</label>
+            <input type="date" value={ev.date} onChange={e => { const a = [...events]; a[i].date = e.target.value; setEvents(a); }} style={{ width: "100%", padding: 12, marginBottom: 15, borderRadius: 10, border: "1px solid #cbd5e1", background: dark ? "#0f172a" : "#fff", color: dark ? "#fff" : "#000" }} />
+            <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "#2563eb", marginBottom: 5 }}>DESCRIPTION</label>
+            <textarea value={ev.description} onChange={e => { const a = [...events]; a[i].description = e.target.value; setEvents(a); }} style={{ width: "100%", padding: 12, borderRadius: 10, border: "1px solid #cbd5e1", minHeight: 80, background: dark ? "#0f172a" : "#fff", color: dark ? "#fff" : "#000" }} />
           </div>
-        )}
+        ))}
+        <div style={{ display: "flex", gap: 15, position: "sticky", bottom: 0, background: dark ? "#0f172a" : "#fff", paddingTop: 15 }}>
+          <button onClick={handleUpdate} style={{ flex: 2, padding: 18, background: "#2563eb", color: "#fff", border: "none", borderRadius: 15, fontWeight: 700, cursor: "pointer", fontSize: 16, display: "flex", alignItems: "center", justifyContent: "center", gap: 10 }}>
+            <HiSave size={20} /> Save All Changes
+          </button>
+          <button onClick={onClose} style={{ flex: 1, padding: 18, background: dark ? "#334155" : "#e2e8f0", color: dark ? "#fff" : "#475569", border: "none", borderRadius: 15, fontWeight: 700, cursor: "pointer", fontSize: 16 }}>
+            Cancel
+          </button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
 
-        {activeTab === 'history' && (
-          <div className={`p-4 sm:p-6 md:p-8 rounded-2xl border transition-all duration-300 ${darkMode ? 'bg-[#12141C] border-[#1f222f]' : 'bg-white border-slate-200 shadow-md'}`}>
-            <div className={`border-b pb-5 mb-6 flex flex-wrap justify-between items-center gap-4 ${darkMode ? 'border-[#2A2E3D]' : 'border-slate-200'}`}>
-              <div>
-                <h2 className={`text-xl sm:text-2xl font-black tracking-tight uppercase ${darkMode ? 'text-white' : 'text-slate-800'}`}>History</h2>
-                <p className={`text-xs sm:text-sm mt-1 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>saved Items</p>
-              </div>
-              <span className={`text-xs font-mono font-bold border px-4 py-2 rounded-xl ${darkMode ? 'bg-[#0B0C10] border-[#2A2E3D] text-[#22C55E]' : 'bg-green-50 border-green-200 text-green-600'}`}>
-                {uniqueSavedTimelines.length} Items Found
-              </span>
-            </div>
+export default function TimelineView() {
+  const [dark, setDark] = useState(false);
+  const [file, setFile] = useState(null);
+  const [csvText, setCsvText] = useState("");
+  const [parsed, setParsed] = useState([]);
+  const [preview, setPreview] = useState(false);
+  const [generated, setGenerated] = useState(false);
+  const [zoom, setZoom] = useState("month");
+  const [view, setView] = useState("horizontal");
+  const [savedList, setSavedList] = useState([]);
+  const [selectedTimeline, setSelectedTimeline] = useState(null);
+  const [editTimeline, setEditTimeline] = useState(null);
+  const [viewEvent, setViewEvent] = useState(null); 
+  const fileRef = useRef();
 
-            {uniqueSavedTimelines.length === 0 ? (
-              <p className="text-sm font-mono text-gray-500 italic py-12 text-center">// Vault storage records currently offline/empty.</p>
-            ) : (
-              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-1">
-                {uniqueSavedTimelines.map((dataset) => {
-                  const isCurrent = timelineName === dataset.name;
-                  return (
-                    <div
-                      key={dataset.id}
-                      onClick={() => handleLoadTimeline(dataset.name)}
-                      className={`flex flex-col sm:flex-row items-start sm:items-center justify-between p-4 rounded-xl border cursor-pointer transition-all duration-200 group gap-4 ${
-                        isCurrent 
-                          ? (darkMode ? 'bg-[#1C1F2E] border-[#22C55E] shadow-[0_0_15px_rgba(34,197,94,0.1)]' : 'bg-green-50 border-green-500') 
-                          : (darkMode ? 'bg-[#161925] border-[#232736] hover:bg-[#1E2235] hover:border-[#22C55E]/50' : 'bg-white border-slate-200 hover:border-green-400 hover:shadow-sm')
-                      }`}
-                    >
-                      <div className="flex items-center gap-4 min-w-0 flex-1">
-                        <div className={`p-2.5 rounded-lg border flex-shrink-0 text-gray-400 group-hover:text-[#22C55E] ${darkMode ? 'bg-[#1A1D26] border-gray-800' : 'bg-slate-50 border-slate-100'}`}>
-                          <FaFolderOpen className="text-sm" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <h4 className={`text-base font-bold truncate ${isCurrent ? (darkMode ? 'text-[#22C55E]' : 'text-green-600') : (darkMode ? 'text-white group-hover:text-[#22C55E]' : 'text-slate-800 group-hover:text-green-600')}`}>
-                            {dataset.name}
-                          </h4>
-                          <div className={`flex items-center gap-1.5 text-xs font-mono mt-0.5 ${darkMode ? 'text-gray-400' : 'text-slate-500'}`}>
-                            <FaRegClock className="text-[10px]" />
-                            <span>ID: {dataset.id ? dataset.id.slice(-6).toUpperCase() : 'N/A'}</span>
-                          </div>
-                        </div>
-                      </div>
+  const th = dark ? { bg: "#0a0f1e", surface: "#111827", text: "#fff", border: "#334155" } : { bg: "#f1f5f9", surface: "#fff", text: "#111827", border: "#e2e8f0" };
 
-                      <div className={`flex items-center justify-between sm:justify-end w-full sm:w-auto gap-4 border-t sm:border-0 pt-3 sm:pt-0 ${darkMode ? 'border-gray-800/40' : 'border-slate-100'}`}>
-                        <span className={`text-[9px] font-mono font-bold px-2.5 py-1 rounded border ${isCurrent ? 'bg-[#22C55E]/10 border-[#22C55E]/30 text-[#22C55E]' : (darkMode ? 'bg-[#1A1D26] border-transparent text-gray-400' : 'bg-slate-100 border-slate-200 text-slate-600')}`}>
-                          {isCurrent ? "ACTIVE MATRIX" : "ARCHIVED"}
-                        </span>
-                        <div className={`flex items-center gap-1 text-xs font-mono font-bold ${isCurrent ? 'text-[#22C55E]' : (darkMode ? 'text-gray-400 group-hover:text-white' : 'text-slate-400 group-hover:text-green-600')}`}>
-                          <span className={`hidden md:inline transition-opacity duration-200 mr-1 ${isCurrent ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}>
-                            {isCurrent ? "ACTIVE" : "DEPLOY"}
-                          </span>
-                          <FaChevronRight className="text-[10px] transform group-hover:translate-x-1 transition-transform" />
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+  useEffect(() => { fetchSaved(); }, []);
+
+  const fetchSaved = async () => {
+    const res = await fetch(`${API}/names`);
+    const data = await res.json();
+    if (data.success) setSavedList(data.datasets);
+  };
+
+  const handleFile = (e) => {
+    const f = e.target.files[0];
+    if (!f) return;
+    setFile(f);
+    const r = new FileReader();
+    r.onload = (ev) => setCsvText(ev.target.result);
+    r.readAsText(f);
+  };
+
+  const handleSaveToDB = async () => {
+    if (!file || parsed.length === 0) return;
+    try {
+      const name = file.name.replace(".csv", "");
+      const res = await fetch(`${API}/save`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, events: parsed }),
+      });
+      if ((await res.json()).success) { alert("Timeline Saved!"); fetchSaved(); }
+    } catch { alert("Save failed"); }
+  };
+
+  const deleteItem = async (id) => {
+    if (!window.confirm("Are you sure you want to delete this timeline?")) return;
+    await fetch(`${API}/delete/${id}`, { method: "DELETE" });
+    fetchSaved();
+    if (selectedTimeline?.id === id) setGenerated(false);
+  };
+
+  const openTimeline = async (item) => {
+    const res = await fetch(`${API}/data/${encodeURIComponent(item.name)}`);
+    const data = await res.json();
+    const formatted = data.data.map(e => ({ ...e, title: e.title || e.name, date: new Date(e.date) }));
+    setSelectedTimeline({ ...item, events: formatted });
+    setGenerated(true);
+  };
+
+  const events = selectedTimeline ? selectedTimeline.events : parsed;
+
+  return (
+    <div style={{ minHeight: "100vh", background: th.bg, color: th.text, transition: "0.4s", fontFamily: "'Inter', sans-serif" }}>
+      <header style={{ height: 80, background: th.surface, padding: "0 40px", display: "flex", justifyContent: "space-between", alignItems: "center", borderBottom: `1px solid ${th.border}`, position: "sticky", top: 0, zIndex: 100 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 15 }}>
+          <div style={{ width: 45, height: 45, background: "linear-gradient(135deg, #2563eb, #7c3aed)", borderRadius: 14, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", boxShadow: "0 8px 15px rgba(37,99,235,0.3)" }}>
+            <HiExternalLink size={26} />
           </div>
-        )}
-
-      </div>
-
-      <BottomDockNav activeTab={activeTab} setActiveTab={setActiveTab} darkMode={darkMode} />
-
-      {isModalOpen && selectedEvent && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/85 backdrop-blur-md">
-          <div className={`w-full max-w-2xl overflow-hidden rounded-3xl border shadow-2xl ${darkMode ? 'bg-[#12141C] border-[#22C55E]/30 shadow-[0_0_50px_rgba(34,197,94,0.15)]' : 'bg-white border-slate-200'}`}>
-            <div className={`flex justify-between items-center px-6 py-5 border-b ${darkMode ? 'border-[#1f222f] bg-[#161925]' : 'bg-slate-50 border-slate-200'}`}>
-              <div className="flex items-center gap-3">
-                <span className="text-xs font-mono font-bold text-[#22C55E] px-3 py-1 rounded-md bg-[#22C55E]/10 border border-[#22C55E]/20">{selectedEvent.date}</span>
-                <span className="text-xs font-mono text-gray-500">// Event Matrix Active</span>
-              </div>
-              <button onClick={() => setIsModalOpen(false)} className={`p-2 rounded-full ${darkMode ? 'hover:bg-zinc-800 text-gray-400 hover:text-white' : 'hover:bg-slate-200 text-slate-500'}`}><FaTimes /></button>
-            </div>
-            <div className="p-6 space-y-6">
-              <h3 className={`text-xl font-black tracking-wide leading-snug ${darkMode ? 'text-white' : 'text-slate-900'}`}>{selectedEvent.name}</h3>
-              <div className="space-y-2">
-                <span className="text-[10px] font-mono uppercase text-gray-500 tracking-wider block">Telemetry Full Summary</span>
-                <div className={`text-sm sm:text-base leading-relaxed p-5 border rounded-2xl max-h-[350px] overflow-y-auto ${darkMode ? 'bg-[#0B0C10] border-[#1f222f] text-gray-300' : 'bg-slate-50 border-slate-200/60 text-slate-700'}`}>{selectedEvent.description || 'Null matrix descriptions data.'}</div>
-              </div>
-            </div>
-            <div className={`px-6 py-4 flex justify-end border-t ${darkMode ? 'border-[#1f222f] bg-[#161925]' : 'bg-slate-50 border-slate-200'}`}>
-              <button onClick={() => setIsModalOpen(false)} className="px-5 py-2 text-xs font-mono font-bold uppercase tracking-wider rounded-xl bg-[#22C55E] text-black hover:bg-[#1eb052] shadow-[0_0_15px_rgba(34,197,94,0.3)] hover:scale-105">Close Telemetry</button>
-            </div>
+          <h2 style={{ margin: 0, letterSpacing: "-0.5px" }}>Timeline <span style={{ color: "#2563eb" }}>View App</span></h2>
+        </div>
+        <div onClick={() => setDark(!dark)} style={{ width: 64, height: 32, background: dark ? "#2563eb" : "#cbd5e1", borderRadius: 20, cursor: "pointer", position: "relative", padding: 4, transition: "0.3s" }}>
+          <div style={{ width: 24, height: 24, background: "#fff", borderRadius: "50%", position: "absolute", left: dark ? 36 : 4, transition: "0.3s cubic-bezier(0.4, 0, 0.2, 1)", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 2px 5px rgba(0,0,0,0.2)" }}>
+            {dark ? <HiMoon color="#2563eb" size={14} /> : <HiSun color="#f59e0b" size={14} />}
           </div>
         </div>
-      )}
+      </header>
 
+      <div style={{ display: "flex", padding: 40, gap: 40, flexWrap: "wrap" }}>
+        {/* SIDEBAR */}
+        <div style={{ width: 340 }}>
+          <div style={{ background: th.surface, padding: 28, borderRadius: 28, border: `1px solid ${th.border}`, boxShadow: "0 10px 30px rgba(0,0,0,0.04)" }}>
+            <h3 style={{ marginTop: 0, marginBottom: 25, display: "flex", alignItems: "center", gap: 10 }}>Saved Datasets</h3>
+            {savedList.length === 0 && <p style={{ opacity: 0.5, fontSize: 14 }}>No saved timelines yet.</p>}
+            {savedList.map(item => (
+              <div key={item.id} style={{ padding: 18, border: `1px solid ${th.border}`, borderRadius: 20, marginBottom: 15, background: dark ? "#1e293b55" : "#f8fafc" }}>
+                <div style={{ fontWeight: 700, marginBottom: 12, fontSize: 15 }}>{item.name}</div>
+                <div style={{ display: "flex", gap: 8 }}>
+                  <button onClick={() => openTimeline(item)} style={{ flex: 1, padding: "10px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 5, fontSize: 13 }}><HiEye /> View</button>
+                  <button onClick={() => { openTimeline(item); setTimeout(() => setEditTimeline({ ...item, events }), 500); }} style={{ padding: "10px", background: "#059669", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer" }}><HiPencil /></button>
+                  <button onClick={() => deleteItem(item.id)} style={{ padding: "10px", background: "#ef4444", color: "#fff", border: "none", borderRadius: 10, cursor: "pointer" }}><HiTrash /></button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* MAIN AREA */}
+        <div style={{ flex: 1, minWidth: 450 }}>
+          <div style={{ background: th.surface, padding: 35, borderRadius: 28, border: `1px solid ${th.border}`, marginBottom: 35, boxShadow: "0 10px 30px rgba(0,0,0,0.04)" }}>
+            <h2 style={{ marginTop: 0, marginBottom: 20 }}>Upload & Process Data</h2>
+            <div style={{ display: "flex", gap: 15, alignItems: "center", flexWrap: "wrap" }}>
+              <button onClick={() => fileRef.current.click()} style={{ padding: "14px 28px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 14, cursor: "pointer", fontWeight: 700, display: "flex", alignItems: "center", gap: 10 }}><HiCloudUpload size={20} /> Select CSV</button>
+              <input type="file" accept=".csv" ref={fileRef} onChange={handleFile} hidden />
+              {file && <span style={{ fontWeight: 600, fontSize: 14 }}>{file.name}</span>}
+              {csvText && <button onClick={() => { setParsed(parseCSV(csvText)); setPreview(true); }} style={{ padding: "14px 28px", background: "#059669", color: "#fff", border: "none", borderRadius: 14, cursor: "pointer", fontWeight: 700 }}>Preview Table</button>}
+              {preview && <button onClick={handleSaveToDB} style={{ padding: "14px 28px", background: "#7c3aed", color: "#fff", border: "none", borderRadius: 14, cursor: "pointer", fontWeight: 700 }}><HiSave /> Save</button>}
+            </div>
+          </div>
+
+          {preview && (
+            <div style={{ background: th.surface, padding: 30, borderRadius: 28, border: `1px solid ${th.border}`, marginBottom: 35 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 25 }}>
+                <h3 style={{ margin: 0 }}>Data Table Preview</h3>
+                <button onClick={() => setGenerated(true)} style={{ padding: "12px 24px", background: "#2563eb", color: "#fff", border: "none", borderRadius: 12, fontWeight: 700, cursor: "pointer" }}>Generate Timeline View</button>
+              </div>
+              <div style={{ overflowX: "auto", borderRadius: 15, border: `1px solid ${th.border}` }}>
+                <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ background: dark ? "#1e293b" : "#f1f5f9" }}>
+                      <th style={{ padding: 15, textAlign: "left", fontSize: 14 }}>EVENT NAME</th>
+                      <th style={{ padding: 15, textAlign: "left", fontSize: 14 }}>DATE</th>
+                      <th style={{ padding: 15, textAlign: "left", fontSize: 14 }}>DESCRIPTION</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {parsed.map((r, i) => (
+                      <tr key={i} style={{ borderBottom: `1px solid ${th.border}` }}>
+                        <td style={{ padding: 15, fontWeight: 600 }}>{r.title}</td>
+                        <td style={{ padding: 15 }}>{new Date(r.date).toLocaleDateString()}</td>
+                        <td style={{ padding: 15, fontSize: 14, opacity: 0.8 }}>{r.description}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          )}
+
+          {generated && (
+            <div style={{ background: th.surface, padding: 35, borderRadius: 28, border: `1px solid ${th.border}`, minHeight: 600 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 40, flexWrap: "wrap", gap: 20 }}>
+                <h2 style={{ margin: 0 }}>{selectedTimeline?.name || "Timeline Visualization"}</h2>
+                <div style={{ display: "flex", gap: 8, background: dark ? "#1e293b" : "#f1f5f9", padding: 6, borderRadius: 14 }}>
+                  {["year", "month", "day"].map(z => (
+                    <button key={z} onClick={() => setZoom(z)} style={{ padding: "8px 18px", border: "none", borderRadius: 10, cursor: "pointer", background: zoom === z ? "#2563eb" : "transparent", color: zoom === z ? "#fff" : th.text, fontWeight: 600, fontSize: 12 }}>{z.toUpperCase()}</button>
+                  ))}
+                </div>
+                <div style={{ display: "flex", gap: 10 }}>
+                  <button onClick={() => setView("horizontal")} style={{ padding: "10px 20px", borderRadius: 12, border: "none", cursor: "pointer", background: view === "horizontal" ? "#2563eb" : "#cbd5e1", color: "#fff", fontWeight: 600 }}>Horizontal</button>
+                  <button onClick={() => setView("vertical")} style={{ padding: "10px 20px", borderRadius: 12, border: "none", cursor: "pointer", background: view === "vertical" ? "#2563eb" : "#cbd5e1", color: "#fff", fontWeight: 600 }}>Vertical</button>
+                </div>
+              </div>
+
+              <div style={{ overflowX: view === "horizontal" ? "auto" : "visible", scrollbarWidth: "none" }}>
+                <style>{`div::-webkit-scrollbar { display: none; }`}</style>
+                
+                {view === "horizontal" ? (
+                  <div style={{ display: "flex", gap: 40, minWidth: "max-content", padding: "20px 10px" }}>
+                    {events.map((ev, i) => (
+                      <div key={i} style={{ display: "flex", alignItems: "center", gap: 40 }}>
+                        <TimelineCard event={ev} zoom={zoom} dark={dark} onClick={() => setViewEvent(ev)} />
+                        {i !== events.length - 1 && <div style={{ minWidth: 60, height: 4, background: "linear-gradient(90deg, #2563eb, #7c3aed)", borderRadius: 10, opacity: 0.3 }} />}
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div style={{ display: "flex", flexDirection: "column", gap: 0, paddingLeft: 20 }}>
+                    {events.map((ev, i) => (
+                      <div key={i} style={{ display: "flex", gap: 35 }}>
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center" }}>
+                          <div style={{ width: 22, height: 22, borderRadius: "50%", background: "#2563eb", border: "4px solid #fff", boxShadow: "0 0 0 4px #2563eb22" }} />
+                          {i !== events.length - 1 && <div style={{ width: 4, flex: 1, background: "linear-gradient(#2563eb22, transparent)" }} />}
+                        </div>
+                        <div style={{ paddingBottom: 50, flex: 1 }}>
+                          <TimelineCard event={ev} zoom={zoom} dark={dark} onClick={() => setViewEvent(ev)} />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* POPUP MODALS */}
+      <AnimatePresence>
+        {viewEvent && (
+          <EventDetailsModal 
+            event={viewEvent} 
+            dark={dark} 
+            zoom={zoom}
+            onClose={() => setViewEvent(null)} 
+          />
+        )}
+        
+        {editTimeline && (
+          <EditModal 
+            dark={dark} 
+            timeline={editTimeline} 
+            onClose={() => setEditTimeline(null)} 
+            onSaved={(updated) => { setSelectedTimeline(updated); fetchSaved(); }} 
+          />
+        )}
+      </AnimatePresence>
     </div>
   );
 }
